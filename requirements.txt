@@ -1,0 +1,6 @@
+unstructured[all-docs]
+ipykernel
+unstructured-inference
+dotenv
+google.generativeai
+openai
