@@ -101,13 +101,14 @@ def generate_with_ollama(prompt_text, model_name="llama2:latest", stream=False):
 
 
 def generate_rag_response(
-    query, search_type="hybrid", top_k=5, model_type="openai", stream=False
+    query, index_name: str, search_type="hybrid", top_k=5, model_type="openai", stream=False
 ):
     """
     Generate RAG response using retrieved chunks.
 
     Args:
         query: User query
+        index_name: OpenSearch index to search
         search_type: Type of search (keyword, semantic, hybrid)
         top_k: Number of chunks to retrieve
         model_type: Type of model to use (openai, ollama)
@@ -118,11 +119,11 @@ def generate_rag_response(
     """
     try:
         if search_type == "keyword":
-            results = keyword_search(query, top_k=top_k)
+            results = keyword_search(query, index_name=index_name, top_k=top_k)
         elif search_type == "semantic":
-            results = semantic_search(query, top_k=top_k)
+            results = semantic_search(query, index_name=index_name, top_k=top_k)
         else:
-            results = hybrid_search(query, top_k=top_k)
+            results = hybrid_search(query, index_name=index_name, top_k=top_k)
 
         if not results:
             message = "No relevant information found. Please try a different search type or refine your question."
@@ -166,9 +167,9 @@ if __name__ == "__main__":
     query = "How does RAG work?"
 
     print("OpenAI Streaming Response: ", end="", flush=True)
-    for chunk in generate_rag_response(query, "hybrid", 3, "openai", True):
+    for chunk in generate_rag_response(query, "research_paper_index", "hybrid", 3, "openai", True):
         print(chunk, end="", flush=True)
 
     print("\n\nOllama Streaming Response: ", end="", flush=True)
-    for chunk in generate_rag_response(query, "hybrid", 3, "ollama", True):
+    for chunk in generate_rag_response(query, "research_paper_index", "hybrid", 3, "ollama", True):
         print(chunk, end="", flush=True)
