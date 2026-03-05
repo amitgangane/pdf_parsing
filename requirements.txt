@@ -4,3 +4,6 @@ unstructured-inference
 dotenv
 google.generativeai
 openai
+opensearch-py
+langchain
+langchain-prompts
