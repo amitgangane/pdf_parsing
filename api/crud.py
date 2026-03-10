@@ -1,6 +1,7 @@
 from api.models.orm import SessionRecord
 
-
+# ALl the database CRUD operations related to session management are defined here. This includes creating a new session, updating an existing session, 
+# retrieving a session by its ID, and listing all sessions. Each function interacts with the database using SQLAlchemy's ORM capabilities to perform the necessary operations on the SessionRecord model.
 def create_session(db, data: dict) -> None:
     db.add(SessionRecord(**data))
     db.commit()

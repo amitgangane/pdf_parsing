@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
 
-
+# Define a Settings class to manage configuration using Pydantic BaseSettings. This allows us to easily load configuration from environment variables or a .env file.
 class Settings(BaseSettings):
     openai_api_key: str = ""
     opensearch_host: str = "localhost"

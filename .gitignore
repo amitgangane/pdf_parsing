@@ -4,6 +4,9 @@
 
 # Personal / private files
 interview_prep.md
+api_code_explanation.md
+ingestion_code_explanation.md
+project_explanation_script.md
 
 # Python
 .venv/
