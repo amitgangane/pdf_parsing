@@ -1,54 +1,45 @@
 # RAG Research Paper Assistant
 
-A full-stack Retrieval-Augmented Generation (RAG) system for uploading and querying research papers (PDFs). It parses PDFs including text, tables, and images, stores embeddings in OpenSearch, and answers questions using OpenAI or Ollama models.
+A Retrieval-Augmented Generation (RAG) system that lets you upload PDF documents and ask questions about them. It combines OpenSearch for vector search, Ollama for local embeddings, and OpenAI or Ollama for answer generation — all wrapped in a FastAPI backend with a Gradio chat UI.
+
+---
+
+## Table of Contents
+
+- [Architecture Overview](#architecture-overview)
+- [Project Structure](#project-structure)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Running the Project](#running-the-project)
+- [Using the Application](#using-the-application)
+- [API Endpoints](#api-endpoints)
+- [How It Works](#how-it-works)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Architecture Overview
 
 ```
-PDF Upload
-    │
-    ▼
-FastAPI (api/)
-    │
-    ├── Saves PDF to disk
-    ├── Creates session in PostgreSQL
-    └── Runs ingestion as BackgroundTask
-            │
-            ▼
-    Ingestion Pipeline (Ingestion/)
-            │
-            ├── partition_pdf()       ← unstructured: extract text, tables, images
-            ├── process_images()      ← caption images via OpenAI Vision
-            ├── process_tables()      ← describe tables via OpenAI
-            ├── create_semantic_chunks() ← chunk text by title + semantics
-            └── ingest_all_content_into_opensearch() ← embed + index
-                        │
-                        ▼
-                  OpenSearch Index
-                  (one per PDF session)
-                        │
-Query ──────────────────┘
-    │
-    ├── keyword_search / semantic_search / hybrid_search
-    └── generate_rag_response() → OpenAI (gpt-4o-mini) or Ollama (llama2)
+┌─────────────┐     ┌─────────────┐     ┌──────────────────┐
+│  Gradio UI  │────▶│  FastAPI    │────▶│   PostgreSQL     │
+│ :7860       │     │  :8000      │     │   :5433          │
+└─────────────┘     └──────┬──────┘     └──────────────────┘
+                           │
+              ┌────────────┴────────────┐
+              │                         │
+       ┌──────▼──────┐          ┌───────▼──────┐
+       │  OpenSearch │          │    Ollama    │
+       │  :9200      │          │    :11434    │
+       │ (vectors)   │          │ (embeddings) │
+       └─────────────┘          └──────────────┘
 ```
 
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| API | FastAPI + Uvicorn |
-| PDF Parsing | Unstructured (hi_res strategy) |
-| Vector Store | OpenSearch 2.11 |
-| Embeddings | Ollama `embeddinggemma` (768-dim) |
-| Generation | OpenAI `gpt-4o-mini` / Ollama `llama2` |
-| Session Store | PostgreSQL 16 (via SQLAlchemy) |
-| UI | Gradio 6 |
-| Containers | Docker Compose (OpenSearch, OpenSearch Dashboards, PostgreSQL) |
+**Data flow:**
+1. User uploads a PDF → FastAPI saves it and starts background ingestion
+2. Ingestion extracts text/images/tables → Ollama embeds them → stored in OpenSearch
+3. User asks a question → OpenSearch retrieves relevant chunks → OpenAI or Ollama generates an answer
 
 ---
 
@@ -56,86 +47,179 @@ Query ──────────────────┘
 
 ```
 RAG-rp/
-├── api/
-│   ├── main.py               # FastAPI app entry point
-│   ├── config.py             # Settings (pydantic-settings + .env)
-│   ├── db.py                 # SQLAlchemy engine + SessionLocal
-│   ├── crud.py               # DB helpers (create/get/update session)
-│   ├── dependencies.py       # get_db() dependency
+├── api/                          # FastAPI backend
+│   ├── main.py                   # App entry point, router registration, table creation
+│   ├── config.py                 # Settings loaded from .env
+│   ├── db.py                     # SQLAlchemy engine and session setup
+│   ├── crud.py                   # Database CRUD helpers
+│   ├── dependencies.py           # FastAPI dependency injection (get_db)
 │   ├── models/
-│   │   ├── orm.py            # SessionRecord ORM model
-│   │   ├── requests.py       # Pydantic request schemas
-│   │   └── responses.py      # Pydantic response schemas
+│   │   ├── orm.py                # SessionRecord SQLAlchemy model
+│   │   ├── requests.py           # Pydantic request schemas
+│   │   └── responses.py          # Pydantic response schemas
 │   └── routers/
-│       ├── upload.py         # POST /upload/
-│       ├── sessions.py       # GET /sessions/, GET /sessions/{id}
-│       └── query.py          # POST /query/, POST /query/stream
-├── Ingestion/
-│   ├── chunking.py           # Semantic chunking, image/table processing
-│   ├── ingestion.py          # OpenSearch indexing
-│   ├── retrieval.py          # keyword / semantic / hybrid search
-│   ├── generation.py         # RAG response generation (OpenAI + Ollama)
-│   └── helper.py             # Shared utilities
-├── paper/                    # Sample PDFs
-├── docker-compose.yml        # OpenSearch + PostgreSQL
-├── gradio_app.py             # Gradio UI
-├── requirements.txt
-└── .env                      # API keys and config (not committed)
+│       ├── upload.py             # POST /upload/ — PDF upload + background ingestion
+│       ├── sessions.py           # GET /sessions/, GET /sessions/{id}
+│       └── query.py              # POST /query/, POST /query/stream
+│
+├── Ingestion/                    # Core RAG pipeline
+│   ├── helper.py                 # Ollama embeddings + OpenSearch client
+│   ├── chunking.py               # PDF parsing: text, images, tables via unstructured
+│   ├── ingestion.py              # Index creation + bulk insert into OpenSearch
+│   ├── retrieval.py              # Keyword, semantic, hybrid search
+│   └── generation.py             # RAG prompt + OpenAI/Ollama response generation
+│
+├── gradio_app.py                 # Gradio chat UI
+├── docker-compose.yml            # OpenSearch, PostgreSQL containers
+├── requirements.txt              # Python dependencies
+├── .env                          # API keys (not committed)
+└── paper/                        # Sample PDF files
 ```
 
 ---
 
-## Setup
+## Prerequisites
 
-### 1. Prerequisites
-- Python 3.10+
-- Docker Desktop
-- Ollama running locally with `embeddinggemma` model pulled
+- **Python 3.10+**
+- **Docker Desktop** (for OpenSearch and PostgreSQL)
+- **Ollama Docker container** running on port `11434`
+- **OpenAI API key** (for image/table captioning during ingestion, and optionally for generation)
 
-### 2. Clone and install
+---
+
+## Installation
+
+### 1. Clone the repository
+
 ```bash
-git clone <repo>
+git clone <repo-url>
 cd RAG-rp
+```
+
+### 2. Create and activate a virtual environment
+
+```bash
 python -m venv .venv
-.venv\Scripts\activate        # Windows
+
+# Windows
+.venv\Scripts\activate
+
+# macOS/Linux
+source .venv/bin/activate
+```
+
+### 3. Install dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 3. Environment variables
-Create a `.env` file in the project root:
-```
-OPENAI_API_KEY=sk-...
+### 4. Set up Ollama
+
+Run Ollama as a Docker container:
+
+```bash
+docker run -d -p 11434:11434 --name ollama ollama/ollama:latest
 ```
 
-### 4. Start containers
+Pull the required models:
+
+```bash
+# Required: embedding model (used for all ingestion and search)
+docker exec -it ollama ollama pull embeddinggemma
+
+# Required if using Ollama for generation
+docker exec -it ollama ollama pull llama2
+```
+
+### 5. Start infrastructure services
+
 ```bash
 docker-compose up -d
 ```
-This starts:
-- OpenSearch at `localhost:9200`
-- OpenSearch Dashboards at `localhost:5601`
-- PostgreSQL at `localhost:5433`
 
-### 5. Pull embedding model (Ollama)
+This starts:
+- **OpenSearch** on port `9200`
+- **OpenSearch Dashboards** on port `5601`
+- **PostgreSQL** on port `5433`
+
+Verify all containers are running:
+
 ```bash
-ollama pull embeddinggemma
+docker ps
 ```
+
+You should see `opensearch`, `rag_postgres`, and `ollama` all with status `Up`.
 
 ---
 
-## Running
+## Configuration
 
-**API server:**
+Create a `.env` file in the project root:
+
+```env
+OPENAI_API_KEY=sk-your-openai-api-key-here
+```
+
+Other settings (in `api/config.py`) with their defaults:
+
+| Setting | Default | Description |
+|---|---|---|
+| `OPENSEARCH_HOST` | `localhost` | OpenSearch host |
+| `OPENSEARCH_PORT` | `9200` | OpenSearch port |
+| `DATABASE_URL` | `postgresql://rag:rag@localhost:5433/rag` | PostgreSQL connection string |
+| `UPLOAD_DIR` | `uploads` | Temporary PDF storage directory |
+
+---
+
+## Running the Project
+
+You need **two terminals** open simultaneously.
+
+### Terminal 1 — Start the FastAPI backend
+
 ```bash
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-Swagger docs: http://localhost:8000/docs
 
-**Gradio UI:**
+Wait until you see:
+```
+INFO: Application startup complete.
+```
+
+### Terminal 2 — Start the Gradio UI
+
 ```bash
 python gradio_app.py
 ```
-UI: http://localhost:7860
+
+Then open **http://localhost:7860** in your browser.
+
+---
+
+## Using the Application
+
+### Step 1: Upload a PDF
+
+1. Go to the **Upload** tab
+2. Click to select a PDF file
+3. Click **Upload**
+4. Copy the `session_id` shown in the output
+5. Click **Check Status** — wait until it shows `ready` (ingestion runs in background, may take 1-3 minutes depending on PDF size)
+
+### Step 2: Ask Questions
+
+1. Go to the **Chat** tab
+2. Click **Refresh Sessions** to populate the dropdown
+3. Select your session from the dropdown
+4. Choose a **retrieval type**:
+   - `hybrid` — combines keyword + semantic search (recommended)
+   - `semantic` — vector similarity only
+   - `keyword` — BM25 text matching only
+5. Choose a **model**:
+   - `openai` — faster, uses `gpt-4o-mini` (requires API key)
+   - `ollama` — local, uses `llama2` (slower on CPU)
+6. Type your question and click **Send**
 
 ---
 
@@ -143,66 +227,88 @@ UI: http://localhost:7860
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/upload/` | Upload PDF → 202, ingestion runs in background |
-| GET | `/sessions/` | List all sessions |
-| GET | `/sessions/{session_id}` | Get session status (`processing` / `ready` / `failed`) |
-| POST | `/query/` | Blocking RAG query |
-| POST | `/query/stream` | Streaming RAG query |
-| GET | `/health` | Health check |
+| `POST` | `/upload/` | Upload a PDF. Returns `202` immediately; ingestion runs in background |
+| `GET` | `/sessions/` | List all sessions with their status |
+| `GET` | `/sessions/{session_id}` | Get status of a specific session (`processing` / `ready` / `failed`) |
+| `POST` | `/query/` | Blocking RAG query — waits for full response |
+| `POST` | `/query/stream` | Streaming RAG query — returns chunks as they are generated |
+| `GET` | `/health` | Health check |
 
-### Query request body
+Interactive API docs available at **http://localhost:8000/docs**
+
+### Example: Query request body
+
 ```json
 {
-  "session_id": "...",
-  "question": "What problem does this paper solve?",
+  "session_id": "bdfd0b0f-23d0-4bb6-a5ef-ef3308bc3d14",
+  "question": "What is the core difference between RAG and fine-tuning?",
   "search_type": "hybrid",
-  "model_type": "openai",
-  "top_k": 5
+  "top_k": 5,
+  "model_type": "openai"
 }
 ```
-- `search_type`: `keyword` | `semantic` | `hybrid`
-- `model_type`: `openai` | `ollama`
 
 ---
 
-## How Ingestion Works
+## How It Works
 
-1. **Upload** — PDF saved to `uploads/`, session created in PostgreSQL with status `processing`
-2. **Parse** — `unstructured` partition_pdf extracts raw elements (text, tables, images) using `hi_res` strategy
-3. **Process** — Images captioned and tables described via OpenAI Vision
-4. **Chunk** — Text chunked by title (max 2000 chars) then semantically grouped
-5. **Embed** — Each chunk embedded using Ollama `embeddinggemma` (768-dim)
-6. **Index** — All chunks ingested into a dedicated OpenSearch index (`pdf_{session_id}`)
-7. **Ready** — Session status updated to `ready` in PostgreSQL
+### Ingestion Pipeline
+
+When a PDF is uploaded:
+
+1. **Parsing** — `unstructured` library extracts content with `hi_res` strategy, separating text, images, and tables
+2. **Captioning** — OpenAI `gpt-4o-mini` generates descriptions for images and tables
+3. **Chunking** — text is split into semantic chunks by title and character limits
+4. **Embedding** — each chunk is embedded using Ollama `embeddinggemma` (768-dimensional vectors)
+5. **Indexing** — chunks + vectors are bulk-inserted into a dedicated OpenSearch index named `pdf_{session_id}`
+
+### Retrieval
+
+Three search strategies are supported:
+
+- **Keyword** — BM25 `match` query on the `content` field
+- **Semantic** — KNN search using cosine similarity against the `embedding` field
+- **Hybrid** — combines both in a `bool` query with `should` clauses; falls back to keyword on error
+
+### Generation
+
+Retrieved chunks are formatted as:
+```
+[Document 1 - text]
+<chunk content>
+
+[Document 2 - image]
+<image description>
+...
+```
+
+This context is injected into a RAG prompt template and sent to either OpenAI or Ollama to generate a grounded answer.
 
 ---
 
-## How Retrieval Works
+## Troubleshooting
 
-Three search modes available:
+### "Connection refused" on port 11434 (Ollama)
+Ollama container is not running. Start it:
+```bash
+docker start ollama
+```
 
-- **Keyword** — BM25 full-text search on OpenSearch
-- **Semantic** — KNN vector similarity search using embeddings
-- **Hybrid** — Combines both with score normalization (recommended)
+### "Connection refused" on port 8000 (FastAPI)
+The FastAPI server is not running. Start it:
+```bash
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+```
 
-Retrieved chunks are assembled into a context window and passed to the LLM with a RAG prompt.
+### "No relevant information found"
+- The session may still be ingesting — check status via `GET /sessions/{session_id}` and wait for `ready`
+- Make sure you selected the correct session in the Gradio dropdown
 
----
+### Ingestion is slow
+Large PDFs with many images/tables take longer because each image is sent to OpenAI for captioning. Text-only PDFs are faster.
 
-## Gradio UI Features
+### Generation is slow with Ollama
+Ollama runs on CPU by default. Switch to `openai` in the model dropdown for faster responses, or enable GPU passthrough if you have an NVIDIA GPU.
 
-- **Upload tab** — Upload a PDF, monitor ingestion status with a polling button
-- **Chat tab** — Select a ready session from dropdown, choose retrieval type and model, chat with streaming responses
-
----
-
-## What's Next (Planned)
-
-- [ ] **Celery + Redis** — Move ingestion out of FastAPI process into a dedicated worker for reliability and retry logic
-- [ ] **Ingestion progress** — Real-time progress updates (pages processed, chunks indexed)
-- [ ] **Multi-PDF sessions** — Query across multiple uploaded documents at once
-- [ ] **Chat history persistence** — Save and reload past conversations per session
-- [ ] **Re-ranking** — Add a cross-encoder re-ranker step after retrieval
-- [ ] **Metadata filtering** — Filter search by page number, section, content type (text/table/image)
-- [ ] **Delete session** — API + UI to delete a session and its OpenSearch index
-- [ ] **Authentication** — API key or OAuth for multi-user deployments
+### OpenSearch index errors (404)
+The session's index was not created yet. Wait for ingestion to complete (status = `ready`).
